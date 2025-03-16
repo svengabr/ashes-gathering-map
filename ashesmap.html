@@ -1,0 +1,1070 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Custom Interactive Map - Ashes of Creation</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    /* Allgemeines Layout */
+    body { margin: 0; padding: 0; }
+    
+    /* Übersichtsleiste oben – in zwei Hälften */
+    #markerOverview {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: rgba(255,255,255,0.95);
+      padding: 5px;
+      display: flex;
+      align-items: stretch;
+      font-size: 12px;
+      overflow-x: auto;
+    }
+    .overview-left, .overview-right {
+      width: 50%;
+      overflow-x: auto;
+      white-space: nowrap;
+      text-align: left;
+    }
+    .overview-sep {
+      width: 2px;
+      background: #000;
+      margin: 0 5px;
+    }
+    .overview-card {
+      background: #f0f0f0;
+      border: 1px solid #ccc;
+      padding: 5px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      min-width: 100px;
+      text-align: left;
+      display: inline-block;
+      margin: 2px;
+    }
+    
+    /* Map-Container – etwas nach unten geschoben */
+    #map {
+      height: calc(100vh - 60px);
+      width: 100vw;
+      margin-top: 60px;
+    }
+    
+    /* Container für Export/Import Buttons: in der unteren linken Ecke */
+    #exportImportContainer {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      z-index: 1100;
+    }
+    
+    /* Container für den Spawnzeiten-Button: in der unteren rechten Ecke */
+    #spawnzeitenContainer {
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      z-index: 1100;
+    }
+    
+    /* Modal-Fenster für Spawnzeiten */
+    #spawnzeitenModal {
+      display: none;
+      position: fixed;
+      top: 0; 
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.5);
+      z-index: 1200;
+    }
+    #spawnzeitenModalContent {
+      background: #fff;
+      margin: 10% auto;
+      padding: 20px;
+      max-width: 400px;
+      border-radius: 4px;
+      position: relative;
+    }
+    #spawnzeitenModalContent pre {
+      white-space: pre-wrap;
+      font-family: inherit;
+    }
+    #spawnzeitenModalClose {
+      margin-top: 10px;
+      display: block;
+      text-align: right;
+      cursor: pointer;
+    }
+    
+    /* Popup-Inhalte */
+    .timer-buttons { display: flex; gap: 10px; }
+    .timer-buttons button { width: 60px; }
+    .custom-timer { display: flex; gap: 10px; margin-top: 5px; }
+    .custom-timer input { width: 60px; }
+    .target-timer { display: flex; gap: 10px; margin-top: 5px; }
+    .target-timer input { width: 100px; }
+    .adjust-timer { display: flex; gap: 10px; margin-top: 5px; }
+    .adjust-timer button { width: 80px; }
+    .color-buttons { display: flex; gap: 10px; margin-top: 5px; }
+    .color-buttons button { width: 80px; cursor: pointer; }
+    .info-line { margin-top: 5px; font-weight: bold; }
+    
+    /* Blinkeffekt */
+    .blinking {
+      animation: blinkRed 0.5s infinite ease-in-out;
+    }
+    @keyframes blinkRed {
+      0% { box-shadow: 0 0 10px red; }
+      50% { box-shadow: 0 0 40px red; }
+      100% { box-shadow: 0 0 10px red; }
+    }
+    
+    /* Popup kompakt */
+    .leaflet-popup-content {
+      font-size: 12px;
+      padding: 5px;
+      margin: 0;
+      max-width: 250px;
+    }
+    .leaflet-popup-content-wrapper {
+      padding: 5px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Übersicht oben -->
+  <div id="markerOverview">
+    <div class="overview-left"></div>
+    <div class="overview-sep"></div>
+    <div class="overview-right"></div>
+  </div>
+  
+  <!-- Container für Export/Import Buttons -->
+  <div id="exportImportContainer">
+    <button id="exportMarkersButton">Marker exportieren</button>
+    <button id="importMarkersButton">Marker importieren</button>
+  </div>
+  
+  <!-- Container für den Spawnzeiten-Button -->
+  <div id="spawnzeitenContainer">
+    <button id="spawnzeitenButton">Spawnzeiten</button>
+  </div>
+  
+  <!-- Modal-Fenster für Spawnzeiten -->
+  <div id="spawnzeitenModal">
+    <div id="spawnzeitenModalContent">
+      <pre>
+Angabe in min
+
+Ore 
+    Copper 120
+    Zinc 120
+    Tin 120
+    Iron 120
+    Rividium 120
+
+Stone
+    Granite 30
+    Basalt 30 
+    Slate 60
+    Limestone 60 
+    Wyrdstone 60 
+    Obsidian 60
+
+Gem
+    Ruby 120
+    Emerald 120
+    Halcyonite 120
+    Sapphire 120
+    Lumadon 120
+
+Wood
+    Ash Wood 240
+    Oak Wood 240
+    Eastern Hemlock Wood 240
+    Western Larch Wood 240 
+    Weeping Willow Wood 240 
+    Braid Wood 240
+
+Plants
+    Flax 240
+    Snowdrop 240 
+    Daffodil 240 
+    Moonbell 240 
+    Giant Bluebell 240
+      </pre>
+      <button id="spawnzeitenModalClose">Schließen</button>
+    </div>
+  </div>
+  
+  <!-- Button zum Laden gespeicherter Marker -->
+  <div id="loadMarkersContainer" style="position: fixed; top: 10px; right: 10px; z-index: 1100;"></div>
+  
+  <!-- Map -->
+  <div id="map"></div>
+  
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    /* Funktion zum Abspielen des Sounds */
+    function playSound() {
+      var audio = new Audio("notification.mp3");
+      audio.play();
+    }
+    
+    /* ======================================================
+       Auto-Delete: Marker löschen, wenn Timer <= -86400 (24h)
+       ====================================================== */
+    function checkAutoDelete(marker, markerId) {
+      if (marker.autoDelete && timers[markerId] && timers[markerId].remaining <= -86400) {
+        removeMarker(markerId);
+        return true;
+      }
+      return false;
+    }
+    
+    /* ======================================================
+       Typ-Toggle: Boss / Resource (Boss: 💀, Resource: 🌿)
+       ====================================================== */
+    function toggleBoss(e, markerId) {
+      e.stopPropagation();
+      var marker = map._layers[markerId];
+      if (!marker) return;
+      marker.type = "boss";
+      marker.setPopupContent(generatePopupContent(marker, markerId));
+    }
+    
+    function toggleResource(e, markerId) {
+      e.stopPropagation();
+      var marker = map._layers[markerId];
+      if (!marker) return;
+      marker.type = "resource";
+      marker.setPopupContent(generatePopupContent(marker, markerId));
+    }
+    
+    function toggleLock(e, markerId) {
+      e.stopPropagation();
+      var marker = map._layers[markerId];
+      if (!marker) return;
+      marker.locked = !marker.locked;
+      if (marker.locked) {
+        marker.dragging.disable();
+      } else {
+        marker.dragging.enable();
+      }
+      marker.setPopupContent(generatePopupContent(marker, markerId));
+    }
+    
+    function toggleAutoDelete(e, markerId) {
+      e.stopPropagation();
+      var marker = map._layers[markerId];
+      if (!marker) return;
+      marker.autoDelete = !marker.autoDelete;
+      marker.setPopupContent(generatePopupContent(marker, markerId));
+    }
+    
+    /* ======================================================
+       Reset Timer Bestätigung
+       ====================================================== */
+    function showResetConfirmation(event, markerId) {
+      event.stopPropagation();
+      var marker = map._layers[markerId];
+      marker.showResetConfirm = true;
+      updateTooltip(marker, timers[markerId].remaining);
+    }
+    function cancelResetConfirmation(event, markerId) {
+      event.stopPropagation();
+      var marker = map._layers[markerId];
+      marker.showResetConfirm = false;
+      updateTooltip(marker, timers[markerId].remaining);
+    }
+    function confirmReset(event, markerId) {
+      event.stopPropagation();
+      var marker = map._layers[markerId];
+      marker.showResetConfirm = false;
+      resetTimer(markerId);
+      updateTooltip(marker, timers[markerId].remaining);
+    }
+    
+    /* ======================================================
+       Marker-Duplikate verhindern (Toleranz: 0.000001)
+       ====================================================== */
+    function markerAlreadyExists(newMarkerData) {
+      var tolerance = 0.000001;
+      var exists = false;
+      map.eachLayer(function(layer) {
+        if (layer instanceof L.Marker) {
+          var latlng = layer.getLatLng();
+          if (Math.abs(latlng.lat - newMarkerData.lat) < tolerance &&
+              Math.abs(latlng.lng - newMarkerData.lng) < tolerance) {
+            exists = true;
+          }
+        }
+      });
+      return exists;
+    }
+    
+    /* ======================================================
+       Map Initialisierung
+       ====================================================== */
+    var data = { mapSize: 2000000, tileSize: 512, transformB: 403, transformD: -6.5, scale: 1.252 };
+    var map = L.map('map', {
+      crs: L.extend({}, L.CRS.Simple, {
+        transformation: new L.Transformation(
+          1 / (data.mapSize / data.tileSize),
+          data.transformB,
+          1 / (data.mapSize / data.tileSize),
+          data.transformD
+        ),
+        scale(zoom) { return Math.pow(2, zoom) * data.scale; },
+        zoom(zoom) { return Math.log(zoom / data.scale) / Math.LN2; }
+      }),
+      zoomControl: true,
+      minZoom: 0,
+      maxZoom: 7,
+      zoom: 2,
+      attributionControl: false,
+      layers: [L.tileLayer('https://ashesmmo.com/ashes/map/{z}/{x}/{y}.webp', { tileSize: data.tileSize })],
+    }).setView([570000, -800000]);
+    
+    L.control.attribution({ prefix: false }).addAttribution('<a href="https://ashesmmo.com">AshesMMO.com</a>').addTo(map);
+    
+    var timers = {};
+    
+    var rarityColors = {
+      "Rare": "blue",
+      "Heroic": "yellow",
+      "Epic": "purple",
+      "Legendary": "orange"
+    };
+    
+    function formatTime(time) {
+      var absTime = Math.abs(time);
+      var hrs = Math.floor(absTime / 3600);
+      var mins = Math.floor((absTime % 3600) / 60);
+      var secs = absTime % 60;
+      var result = (hrs < 10 ? "0" + hrs : hrs) + ":" +
+                   (mins < 10 ? "0" + mins : mins) + ":" +
+                   (secs < 10 ? "0" + secs : secs);
+      return time < 0 ? "-" + result : result;
+    }
+    function formatDate(date) {
+      var hrs = date.getHours();
+      var mins = date.getMinutes();
+      var secs = date.getSeconds();
+      return (hrs < 10 ? "0" + hrs : hrs) + ":" +
+             (mins < 10 ? "0" + mins : mins) + ":" +
+             (secs < 10 ? "0" + secs : secs);
+    }
+    
+    function updateEndTimeDisplay(markerId) {
+      var endDisplay = document.getElementById('endtime-' + markerId);
+      if (endDisplay && timers[markerId] && timers[markerId].expectedEnd) {
+        endDisplay.textContent = "Endzeit: " + formatDate(timers[markerId].expectedEnd);
+      }
+    }
+    
+    // Aktualisiert den Tooltip-Inhalt und zeigt ein Weckersymbol an, falls Sound aktiv ist
+    function updateTooltip(marker, time) {
+      var formattedTime = formatTime(time);
+      var markerId = marker._leaflet_id;
+      var endTimeString = "";
+      if (timers[markerId] && timers[markerId].expectedEnd) {
+        endTimeString = "<br>Endzeit: " + formatDate(timers[markerId].expectedEnd);
+      }
+      var description = marker.description || "";
+      var rarityIcon = "";
+      if (marker.rarity) {
+        var color = rarityColors[marker.rarity] || "gray";
+        rarityIcon = '<span style="display:inline-block;width:12px;height:12px;border-radius:50%;background-color:' + color + ';margin-right:5px;"></span>';
+      }
+      var lockIcon = marker.locked ? '<span style="margin-right:5px;">🔒</span>' : '';
+      var typeIcon = (marker.type === "boss")
+            ? '<span style="margin-right:5px;">💀</span>'
+            : '<span style="margin-right:5px;">🌿</span>';
+      var content = rarityIcon + typeIcon + lockIcon + description + '<br>Timer: ' + formattedTime + endTimeString;
+      
+      if (marker.showResetConfirm) {
+        content += '<br><div onclick="event.stopPropagation()">' +
+                   'Reset Timer?<br>' +
+                   '<button onclick="confirmReset(event, ' + markerId + ')">Yes</button> ' +
+                   '<button onclick="cancelResetConfirmation(event, ' + markerId + ')">No</button>' +
+                   '</div>';
+      } else {
+        content += '<br><button onclick="showResetConfirmation(event, ' + markerId + ')">Reset Timer</button>';
+      }
+      if (marker.discordLink) {
+        content += '<br><button onclick="openDiscordLink(event, ' + markerId + ')" class="discord-btn" title="Öffne Discord Screenshot Link" style="border:none;background:none;padding:0;cursor:pointer;">' +
+                   '<img src="https://cdn-icons-png.flaticon.com/512/2111/2111370.png" alt="Discord" style="width:16px;height:16px;">' +
+                   '</button>';
+      }
+      if (marker.doNotExport) {
+        content = '🚫 ' + content;
+      }
+      // Zeige Weckersymbol im Tooltip, falls Sound aktiv ist
+      if (marker.soundEnabled) {
+        content = "⏰ " + content;
+      }
+      
+      if (marker.getTooltip()) {
+        marker.getTooltip().setContent(content);
+      }
+    }
+    
+    function resetTimer(markerId) {
+      if (timers[markerId]) {
+        var marker = map._layers[markerId];
+        clearInterval(timers[markerId].interval);
+        var initial = timers[markerId].initial;
+        timers[markerId].remaining = initial;
+        timers[markerId].expectedEnd = new Date(new Date().getTime() + initial * 1000);
+        // Sound-Flag zurücksetzen
+        marker.soundNotified = false;
+        function updateTimer() {
+          var time = timers[markerId].remaining;
+          var display = document.getElementById('timer-' + markerId);
+          if (display) display.textContent = formatTime(time);
+          // Soundbenachrichtigung nur, wenn Sound aktiviert ist
+          if (time < marker.soundThreshold && marker.soundEnabled && !marker.soundNotified) {
+            playSound();
+            marker.soundNotified = true;
+          }
+          updateTooltip(marker, time);
+          timers[markerId].remaining--;
+          if (checkAutoDelete(marker, markerId)) return;
+        }
+        timers[markerId].interval = setInterval(updateTimer, 1000);
+        updateTimer();
+      }
+    }
+    
+    function setMarkerRarity(markerId, rarity) {
+      var marker = map._layers[markerId];
+      if (marker.rarity === rarity) {
+        marker.rarity = "";
+      } else {
+        marker.rarity = rarity;
+      }
+      var remaining = timers[markerId] ? timers[markerId].remaining : 0;
+      updateTooltip(marker, remaining);
+    }
+    
+    // Neuer Button im Popup: "Sound Einstellungen"
+    function setSoundThreshold(e, markerId) {
+      e.stopPropagation();
+      var marker = map._layers[markerId];
+      var input = prompt("Gib den Sound-Schwellenwert in Sekunden ein (leer = deaktivieren):", marker.soundThreshold || 30);
+      if (input === null) return;
+      if (input.trim() === "") {
+        marker.soundEnabled = false;
+      } else {
+        var val = parseInt(input);
+        if (!isNaN(val) && val > 0) {
+          marker.soundThreshold = val;
+          marker.soundEnabled = true;
+        } else {
+          alert("Ungültige Eingabe.");
+        }
+      }
+      updateTooltip(marker, timers[markerId] ? timers[markerId].remaining : 0);
+    }
+    
+    // Neuer Button im Popup: "Discord Link zum Screenshot" (unverändert)
+    function setDiscordLink(e, markerId) {
+      e.stopPropagation();
+      var marker = map._layers[markerId];
+      var currentLink = marker.discordLink || "";
+      var newLink = prompt("Bitte gib den Discord Link zum Screenshot ein:", currentLink);
+      if(newLink !== null) {
+        newLink = newLink.trim();
+        if(newLink !== "" && newLink.indexOf("https://cdn.discordapp.com/attachments/") !== 0) {
+          alert("Bitte gib einen gültigen Discord-Link ein. Er muss mit \"https://cdn.discordapp.com/attachments/\" beginnen.");
+          return;
+        }
+        marker.discordLink = newLink;
+        marker.setPopupContent(generatePopupContent(marker, markerId));
+        updateTooltip(marker, timers[markerId] ? timers[markerId].remaining : 0);
+      }
+    }
+    
+    // Öffnet den hinterlegten Discord-Link in einem neuen Tab.
+    function openDiscordLink(e, markerId) {
+      e.stopPropagation();
+      var marker = map._layers[markerId];
+      if(marker && marker.discordLink) {
+        window.open(marker.discordLink, '_blank');
+      }
+    }
+    
+    // Neuer Button im Popup zum Ausschließen des Markers vom Export.
+    function toggleDoNotExport(e, markerId) {
+      e.stopPropagation();
+      var marker = map._layers[markerId];
+      marker.doNotExport = !marker.doNotExport;
+      marker.setPopupContent(generatePopupContent(marker, markerId));
+      updateTooltip(marker, timers[markerId] ? timers[markerId].remaining : 0);
+    }
+    
+    // Popup-Inhalt: Sound-Einstellungen (über den ⏰ Button) wurden hinzugefügt.
+    function generatePopupContent(marker, markerId) {
+      var description = marker.description || "";
+      
+      var topRow = `
+        <div style="display: flex; gap: 5px; margin-bottom: 5px;">
+          <button onclick="toggleLock(event, ${markerId})">${marker.locked ? '🔒' : '🔓'}</button>
+          <button onclick="toggleBoss(event, ${markerId})">💀</button>
+          <button onclick="toggleResource(event, ${markerId})">🌿</button>
+        </div>
+      `;
+      
+      var timerControls = `
+        <b>${description}</b><br>
+        <div class="timer-buttons">
+          <button onclick="startTimer(${markerId}, 1)">1h</button>
+          <button onclick="startTimer(${markerId}, 2)">2h</button>
+          <button onclick="startTimer(${markerId}, 4)">4h</button>
+        </div>
+        <div class="custom-timer">
+          <input type="number" id="customTimerInput-${markerId}" placeholder="Minuten" min="1">
+          <button onclick="startCustomTimer(${markerId})">Start</button>
+        </div>
+        <div class="target-timer">
+          <input type="time" id="targetTimeInput-${markerId}">
+          <button onclick="startTargetTimer(${markerId})">Timer bis Zielzeit</button>
+        </div>
+        <div id="timer-${markerId}" class="info-line"></div>
+        <div id="endtime-${markerId}" class="info-line"></div>
+        <div class="adjust-timer">
+          <button onclick="addMinute(${markerId})">+1 Min</button>
+          <button onclick="subtractMinute(${markerId})">-1 Min</button>
+        </div>
+        <div class="color-buttons">
+          <button onclick="setMarkerRarity(${markerId}, 'Rare')">Rare</button>
+          <button onclick="setMarkerRarity(${markerId}, 'Heroic')">Heroic</button>
+          <button onclick="setMarkerRarity(${markerId}, 'Epic')">Epic</button>
+          <button onclick="setMarkerRarity(${markerId}, 'Legendary')">Legendary</button>
+        </div>
+      `;
+      
+      var discordRow = `
+        <div style="margin-top:5px;">
+          <button onclick="setDiscordLink(event, ${markerId})">Discord Link zum Screenshot</button>
+        </div>
+      `;
+      
+      var exportToggleRow = `
+        <div style="margin-top:5px;">
+          <button onclick="toggleDoNotExport(event, ${markerId})">
+            ${marker.doNotExport ? 'Export erlauben' : 'Nicht exportieren'}
+          </button>
+        </div>
+      `;
+      
+      var actionRow1 = `
+        <div style="display: flex; justify-content: space-between; margin-top: 5px;">
+          <button onclick="changeMarkerDescription(${markerId})">Name ändern</button>
+        </div>
+      `;
+      
+      var actionRow2 = `
+        <div style="display: flex; justify-content: space-between; margin-top: 5px;">
+          <button onclick="removeMarker(${markerId})">Marker löschen</button>
+          <button onclick="toggleAutoDelete(event, ${markerId})">Auto-Delete: ${marker.autoDelete ? 'An' : 'Aus'} (bei -24h)</button>
+        </div>
+      `;
+      
+      var soundRow = `
+        <div style="margin-top:5px;">
+          <button onclick="setSoundThreshold(event, ${markerId})">⏰ Sound Einstellungen</button>
+        </div>
+      `;
+      
+      return topRow + timerControls + discordRow + exportToggleRow + actionRow1 + actionRow2 + soundRow;
+    }
+    
+    function changeMarkerDescription(markerId) {
+      var marker = map._layers[markerId];
+      var currentDesc = marker.description || marker.getTooltip().getContent().split('<br>')[0];
+      var newDescription = prompt("Gib einen neuen Namen für den Marker ein:", currentDesc);
+      if (newDescription !== null && newDescription.trim() !== "") {
+        marker.description = newDescription;
+        updateTooltip(marker, timers[markerId] ? timers[markerId].remaining : 0);
+        marker.setPopupContent(generatePopupContent(marker, markerId));
+      }
+    }
+    
+    // Beim Klick auf die Map Marker erstellen
+    map.on('click', function(e) {
+      if (e.originalEvent.target.tagName === "BUTTON") return;
+      var markerTitle = prompt("Gib einen Namen für den Marker ein:");
+      if (markerTitle !== null) {
+        var marker = L.marker(e.latlng, { draggable: true }).addTo(map);
+        marker.description = markerTitle;
+        marker.locked = false;
+        marker.autoDelete = true;
+        marker.type = "resource";
+        marker.discordLink = "";
+        marker.doNotExport = false;
+        // Sound-Benachrichtigung standardmäßig deaktiviert!
+        marker.soundEnabled = false;
+        marker.soundThreshold = 30;
+        marker.soundNotified = false;
+        
+        marker.bindTooltip(markerTitle, { permanent: true, direction: 'top', offset: [-12, -20], interactive: true }).openTooltip();
+        marker.bindPopup(generatePopupContent(marker, marker._leaflet_id), { offset: [0, -40] });
+        marker.on('popupopen', function() {
+          if (timers[marker._leaflet_id]) {
+            updateTooltip(marker, timers[marker._leaflet_id].remaining);
+            updateEndTimeDisplay(marker._leaflet_id);
+          }
+        });
+      }
+    });
+    
+    function removeMarker(markerId) {
+      var marker = map._layers[markerId];
+      if (marker) {
+        clearInterval(timers[markerId]?.interval);
+        delete timers[markerId];
+        map.removeLayer(marker);
+      }
+    }
+    
+    // Gemeinsame Funktion zur Initialisierung eines Standard-Timers (für startTimer und startCustomTimer)
+    function setupStandardTimer(markerId, duration) {
+      var marker = map._layers[markerId];
+      if (!marker) return;
+      // Falls Soundoptionen noch nicht gesetzt sind, standardmäßig deaktiviert:
+      if (marker.soundEnabled === undefined) {
+        marker.soundEnabled = false;
+        marker.soundThreshold = 30;
+        marker.soundNotified = false;
+      } else {
+        marker.soundNotified = false;
+      }
+      var display = document.getElementById('timer-' + markerId);
+      if (timers[markerId]) { clearInterval(timers[markerId].interval); }
+      timers[markerId] = {
+        initial: duration,
+        remaining: duration,
+        interval: null,
+        expectedEnd: new Date(new Date().getTime() + duration * 1000)
+      };
+      updateEndTimeDisplay(markerId);
+      updateTooltip(marker, duration);
+      function updateTimer() {
+        var time = timers[markerId].remaining;
+        if (display) display.textContent = formatTime(time);
+        // Soundbenachrichtigung nur, wenn aktiviert ist
+        if (time < marker.soundThreshold && marker.soundEnabled && !marker.soundNotified) {
+          playSound();
+          marker.soundNotified = true;
+        }
+        updateTooltip(marker, time);
+        timers[markerId].remaining--;
+        if (checkAutoDelete(marker, markerId)) return;
+      }
+      timers[markerId].interval = setInterval(updateTimer, 1000);
+      updateTimer();
+    }
+    
+    function startTimer(markerId, hours) {
+      var duration = hours * 3600;
+      setupStandardTimer(markerId, duration);
+    }
+    
+    function startCustomTimer(markerId) {
+      var input = document.getElementById('customTimerInput-' + markerId);
+      if (!input) return;
+      var minutes = parseInt(input.value);
+      if (isNaN(minutes) || minutes <= 0) {
+        alert("Bitte gib eine gültige Minutenanzahl ein.");
+        return;
+      }
+      var duration = minutes * 60;
+      setupStandardTimer(markerId, duration);
+    }
+    
+    function startTargetTimer(markerId) {
+      var input = document.getElementById('targetTimeInput-' + markerId);
+      if (!input) return;
+      var targetTimeValue = input.value;
+      if (!targetTimeValue) {
+        alert("Bitte gib eine gültige Zielzeit ein.");
+        return;
+      }
+      var now = new Date();
+      var parts = targetTimeValue.split(":");
+      var targetHour = parseInt(parts[0], 10);
+      var targetMinute = parseInt(parts[1], 10);
+      var targetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), targetHour, targetMinute, 0);
+      if (targetDate <= now) { targetDate.setDate(targetDate.getDate() + 1); }
+      var duration = Math.floor((targetDate - now) / 1000);
+      var marker = map._layers[markerId];
+      if (!marker) return;
+      // Sound-Flag zurücksetzen
+      marker.soundNotified = false;
+      var display = document.getElementById('timer-' + markerId);
+      if (timers[markerId]) { clearInterval(timers[markerId].interval); }
+      timers[markerId] = {
+        initial: duration,
+        remaining: duration,
+        interval: null,
+        expectedEnd: targetDate
+      };
+      updateEndTimeDisplay(markerId);
+      updateTooltip(marker, duration);
+      function updateTargetTimer() {
+        var marker = map._layers[markerId];
+        if (!marker) return;
+        var remainingTime = Math.floor((timers[markerId].expectedEnd - new Date()) / 1000);
+        timers[markerId].remaining = remainingTime;
+        if (display) display.textContent = formatTime(remainingTime);
+        // Soundbenachrichtigung auch hier:
+        if (remainingTime < marker.soundThreshold && marker.soundEnabled && !marker.soundNotified) {
+          playSound();
+          marker.soundNotified = true;
+        }
+        updateTooltip(marker, remainingTime);
+        if (checkAutoDelete(marker, markerId)) return;
+      }
+      timers[markerId].interval = setInterval(updateTargetTimer, 1000);
+      updateTargetTimer();
+    }
+    
+    function addMinute(markerId) {
+      if (timers[markerId]) {
+        timers[markerId].remaining += 60;
+        timers[markerId].expectedEnd = new Date(timers[markerId].expectedEnd.getTime() + 60000);
+        var marker = map._layers[markerId];
+        var display = document.getElementById('timer-' + markerId);
+        if (display) display.textContent = formatTime(timers[markerId].remaining);
+        updateTooltip(marker, timers[markerId].remaining);
+        updateEndTimeDisplay(markerId);
+      }
+    }
+    
+    function subtractMinute(markerId) {
+      if (timers[markerId]) {
+        timers[markerId].remaining -= 60;
+        timers[markerId].expectedEnd = new Date(timers[markerId].expectedEnd.getTime() - 60000);
+        var marker = map._layers[markerId];
+        var display = document.getElementById('timer-' + markerId);
+        if (display) display.textContent = formatTime(timers[markerId].remaining);
+        updateTooltip(marker, timers[markerId].remaining);
+        updateEndTimeDisplay(markerId);
+      }
+    }
+    
+    // Beim Klick auf ein Übersichtskärtchen heranzoomen und Popup öffnen
+    function zoomToMarker(markerId) {
+      var marker = map._layers[markerId];
+      if (marker) {
+        map.setView(marker.getLatLng(), 5);
+        marker.openPopup();
+      }
+    }
+    
+    function updateMarkerOverview() {
+      var leftMarkers = [];
+      var rightMarkers = [];
+      for (var markerId in timers) {
+        if (timers.hasOwnProperty(markerId)) {
+          var marker = map._layers[markerId];
+          if (!marker) continue;
+          if (marker.type === "boss") {
+            leftMarkers.push({ id: markerId, remaining: timers[markerId].remaining, expectedEnd: timers[markerId].expectedEnd });
+          } else {
+            rightMarkers.push({ id: markerId, remaining: timers[markerId].remaining, expectedEnd: timers[markerId].expectedEnd });
+          }
+        }
+      }
+      leftMarkers.sort(function(a, b) { return a.remaining - b.remaining; });
+      rightMarkers.sort(function(a, b) { return a.remaining - b.remaining; });
+      leftMarkers = leftMarkers.slice(0, 5);
+      rightMarkers = rightMarkers.slice(0, 5);
+      
+      var leftHTML = '';
+      leftMarkers.forEach(function(entry) {
+         var marker = map._layers[entry.id];
+         if (!marker) return;
+         var rarityIcon = "";
+         if (marker.rarity) {
+           var color = rarityColors[marker.rarity] || "gray";
+           rarityIcon = '<span style="display:inline-block;width:12px;height:12px;border-radius:50%;background-color:' + color + ';margin-right:5px;"></span>';
+         }
+         var typeIcon = (marker.type === "boss")
+            ? '<span style="margin-right:5px;">💀</span>'
+            : '<span style="margin-right:5px;">🌿</span>';
+         var lockIcon = marker.locked ? '<span style="margin-right:5px;">🔒</span>' : '';
+         var cardContent = rarityIcon + typeIcon + lockIcon + marker.description +
+                           "<br>Timer: " + formatTime(entry.remaining) +
+                           "<br>Endzeit: " + formatDate(entry.expectedEnd);
+         leftHTML += '<div class="overview-card" onclick="zoomToMarker(' + entry.id + ')">' + cardContent + '</div>';
+      });
+      
+      var rightHTML = '';
+      rightMarkers.forEach(function(entry) {
+         var marker = map._layers[entry.id];
+         if (!marker) return;
+         var rarityIcon = "";
+         if (marker.rarity) {
+           var color = rarityColors[marker.rarity] || "gray";
+           rarityIcon = '<span style="display:inline-block;width:12px;height:12px;border-radius:50%;background-color:' + color + ';margin-right:5px;"></span>';
+         }
+         var typeIcon = (marker.type === "boss")
+            ? '<span style="margin-right:5px;">💀</span>'
+            : '<span style="margin-right:5px;">🌿</span>';
+         var lockIcon = marker.locked ? '<span style="margin-right:5px;">🔒</span>' : '';
+         var cardContent = rarityIcon + typeIcon + lockIcon + marker.description +
+                           "<br>Timer: " + formatTime(entry.remaining) +
+                           "<br>Endzeit: " + formatDate(entry.expectedEnd);
+         rightHTML += '<div class="overview-card" onclick="zoomToMarker(' + entry.id + ')">' + cardContent + '</div>';
+      });
+      
+      document.querySelector('.overview-left').innerHTML = leftHTML;
+      document.querySelector('.overview-right').innerHTML = rightHTML;
+    }
+    setInterval(updateMarkerOverview, 1000);
+    
+    // Export-Funktion: Erzeugt einen JSON-String mit allen Markerdaten, außer denen, die vom Export ausgeschlossen sind.
+    function exportMarkers() {
+      var markersToExport = [];
+      map.eachLayer(function(layer) {
+        if (layer instanceof L.Marker && !layer.doNotExport) {
+          var markerData = {
+            lat: layer.getLatLng().lat,
+            lng: layer.getLatLng().lng,
+            description: layer.description || "",
+            rarity: layer.rarity || "",
+            autoDelete: layer.autoDelete || false,
+            type: layer.type || "resource",
+            discordLink: layer.discordLink || ""
+          };
+          var id = layer._leaflet_id;
+          if (timers[id]) {
+            markerData.timer = {
+              initial: timers[id].initial,
+              expectedEnd: timers[id].expectedEnd.toISOString()
+            };
+          }
+          markersToExport.push(markerData);
+        }
+      });
+      return JSON.stringify(markersToExport, null, 2);
+    }
+    
+    function showExportMarkers() {
+      var json = exportMarkers();
+      prompt("Kopiere die Marker-Daten:", json);
+    }
+    
+    // Importiert Marker aus einem JSON-String und überspringt Duplikate.
+    function importMarkersFromJSON() {
+      var json = prompt("Füge die Marker-Daten ein:");
+      if (!json) return;
+      try {
+        var markersArray = JSON.parse(json);
+      } catch(e) {
+        alert("Ungültiges JSON.");
+        return;
+      }
+      markersArray.forEach(function(markerData) {
+        if (markerAlreadyExists(markerData)) {
+          return;
+        }
+        var latlng = L.latLng(markerData.lat, markerData.lng);
+        var marker = L.marker(latlng, { draggable: true }).addTo(map);
+        marker.description = markerData.description;
+        if (markerData.rarity) { marker.rarity = markerData.rarity; }
+        marker.autoDelete = (typeof markerData.autoDelete === 'boolean') ? markerData.autoDelete : true;
+        marker.type = markerData.type || "resource";
+        marker.discordLink = markerData.discordLink || "";
+        marker.doNotExport = markerData.doNotExport || false;
+        marker.locked = false;
+        // Sound-Benachrichtigung standardmäßig ausgeschaltet
+        marker.soundEnabled = false;
+        marker.soundThreshold = 30;
+        marker.soundNotified = false;
+        
+        marker.bindTooltip(marker.description, { permanent: true, direction: 'top', offset: [-12, -20], interactive: true }).openTooltip();
+        marker.bindPopup(generatePopupContent(marker, marker._leaflet_id), { offset: [0, -40] });
+        marker.on('popupopen', function() {
+          if (timers[marker._leaflet_id]) {
+            updateTooltip(marker, timers[marker._leaflet_id].remaining);
+            updateEndTimeDisplay(marker._leaflet_id);
+          }
+        });
+        
+        if (markerData.timer) {
+          var expectedEnd = new Date(markerData.timer.expectedEnd);
+          var remaining = Math.floor((expectedEnd - new Date()) / 1000);
+          timers[marker._leaflet_id] = {
+            initial: markerData.timer.initial,
+            remaining: remaining,
+            interval: null,
+            expectedEnd: expectedEnd
+          };
+          function updateLoadedTimer() {
+            var time = timers[marker._leaflet_id].remaining;
+            var display = document.getElementById('timer-' + marker._leaflet_id);
+            if (display) display.textContent = formatTime(time);
+            // Soundcheck auch beim Laden
+            if (time < marker.soundThreshold && marker.soundEnabled && !marker.soundNotified) {
+              playSound();
+              marker.soundNotified = true;
+            }
+            updateTooltip(marker, time);
+            timers[marker._leaflet_id].remaining--;
+            if (checkAutoDelete(marker, marker._leaflet_id)) return;
+          }
+          timers[marker._leaflet_id].interval = setInterval(updateLoadedTimer, 1000);
+          updateLoadedTimer();
+        }
+      });
+    }
+    
+    function saveMarkersToLocalStorage() {
+      var markersToSave = [];
+      map.eachLayer(function(layer) {
+        if (layer instanceof L.Marker) {
+          var markerData = {
+            lat: layer.getLatLng().lat,
+            lng: layer.getLatLng().lng,
+            description: layer.description || "",
+            rarity: layer.rarity || "",
+            autoDelete: layer.autoDelete || false,
+            type: layer.type || "resource",
+            discordLink: layer.discordLink || "",
+            doNotExport: layer.doNotExport || false
+          };
+          var id = layer._leaflet_id;
+          if (timers[id]) {
+            markerData.timer = {
+              initial: timers[id].initial,
+              expectedEnd: timers[id].expectedEnd.toISOString()
+            };
+          }
+          markersToSave.push(markerData);
+        }
+      });
+      localStorage.setItem("markers", JSON.stringify(markersToSave));
+    }
+    
+    function loadMarkersFromLocalStorage() {
+      var savedMarkers = localStorage.getItem("markers");
+      if (!savedMarkers) return;
+      var markersArray = JSON.parse(savedMarkers);
+      markersArray.forEach(function(markerData) {
+        var latlng = L.latLng(markerData.lat, markerData.lng);
+        var marker = L.marker(latlng, { draggable: true }).addTo(map);
+        marker.description = markerData.description;
+        if (markerData.rarity) { marker.rarity = markerData.rarity; }
+        marker.autoDelete = (typeof markerData.autoDelete === 'boolean') ? markerData.autoDelete : true;
+        marker.type = markerData.type || "resource";
+        marker.discordLink = markerData.discordLink || "";
+        marker.doNotExport = markerData.doNotExport || false;
+        marker.locked = false;
+        // Sound-Benachrichtigung standardmäßig ausgeschaltet
+        marker.soundEnabled = false;
+        marker.soundThreshold = 30;
+        marker.soundNotified = false;
+        
+        marker.bindTooltip(marker.description, { permanent: true, direction: 'top', offset: [-12, -20], interactive: true }).openTooltip();
+        marker.bindPopup(generatePopupContent(marker, marker._leaflet_id), { offset: [0, -40] });
+        marker.on('popupopen', function() {
+          if (timers[marker._leaflet_id]) {
+            updateTooltip(marker, timers[marker._leaflet_id].remaining);
+            updateEndTimeDisplay(marker._leaflet_id);
+          }
+        });
+        
+        if (markerData.timer) {
+          var expectedEnd = new Date(markerData.timer.expectedEnd);
+          var remaining = Math.floor((expectedEnd - new Date()) / 1000);
+          timers[marker._leaflet_id] = {
+            initial: markerData.timer.initial,
+            remaining: remaining,
+            interval: null,
+            expectedEnd: expectedEnd
+          };
+          function updateLoadedTimer() {
+            var time = timers[marker._leaflet_id].remaining;
+            var display = document.getElementById('timer-' + marker._leaflet_id);
+            if (display) display.textContent = formatTime(time);
+            if (time < marker.soundThreshold && marker.soundEnabled && !marker.soundNotified) {
+              playSound();
+              marker.soundNotified = true;
+            }
+            updateTooltip(marker, time);
+            timers[marker._leaflet_id].remaining--;
+            if (checkAutoDelete(marker, marker._leaflet_id)) return;
+          }
+          timers[marker._leaflet_id].interval = setInterval(updateLoadedTimer, 1000);
+          updateLoadedTimer();
+        }
+      });
+    }
+    
+    window.addEventListener('beforeunload', function() {
+      saveMarkersToLocalStorage();
+    });
+    
+    (function checkForSavedMarkers(){
+      if (localStorage.getItem("markers")) {
+        var loadButtonContainer = document.getElementById("loadMarkersContainer");
+        loadButtonContainer.innerHTML = '<button id="loadMarkersButton">Gespeicherte Marker laden</button>';
+        document.getElementById("loadMarkersButton").addEventListener("click", function() {
+          loadMarkersFromLocalStorage();
+          loadButtonContainer.innerHTML = "";
+        });
+      }
+    })();
+    
+    // Event-Listener für Export/Import Buttons
+    document.getElementById("exportMarkersButton").addEventListener("click", function() {
+      showExportMarkers();
+    });
+    document.getElementById("importMarkersButton").addEventListener("click", function() {
+      importMarkersFromJSON();
+    });
+    
+    // Event-Listener für den Spawnzeiten-Button und Modal-Fenster
+    document.getElementById("spawnzeitenButton").addEventListener("click", function() {
+      document.getElementById("spawnzeitenModal").style.display = "block";
+    });
+    // Schließen über den Button
+    document.getElementById("spawnzeitenModalClose").addEventListener("click", function() {
+      document.getElementById("spawnzeitenModal").style.display = "none";
+    });
+    // Schließen, wenn man auf den Hintergrund klickt
+    document.getElementById("spawnzeitenModal").addEventListener("click", function(e) {
+      if (e.target === this) {
+        this.style.display = "none";
+      }
+    });
+    
+    // Neue Funktion: Alle Timer einmal pro Minute neu berechnen, basierend auf der erwarteten Endzeit.
+    function recalcAllTimers() {
+      for (var markerId in timers) {
+        if (timers.hasOwnProperty(markerId)) {
+          var marker = map._layers[markerId];
+          if (!marker) continue;
+          var timerObj = timers[markerId];
+          var newRemaining = Math.floor((timerObj.expectedEnd - new Date()) / 1000);
+          timerObj.remaining = newRemaining;
+          var display = document.getElementById('timer-' + markerId);
+          if (display) {
+            display.textContent = formatTime(newRemaining);
+          }
+          updateTooltip(marker, newRemaining);
+        }
+      }
+    }
+    // Einmal pro Minute ausführen:
+    setInterval(recalcAllTimers, 60000);
+    
+  </script>
+</body>
+</html>
